@@ -1,0 +1,30 @@
+send_tweets: false
+secret_token: "somerandomtoken"
+base_url:     "http://my.awesomesite.com/"
+teasers:
+  - "Did you miss?"
+  - "From the Archive:"
+  - ""
+excluded_categories:
+  - "Private"
+  - "Out of Date"
+included_categories:
+database:
+  mysql_host:   "127.0.0.1"
+  mysql_port:   "3306"
+  mysql_user:   "readonlyaccount"
+  mysql_pass:   "somerandompassword"
+  mysql_db:     "my_awesome_db"
+  table_prefix: "serendipity_"
+shortener:
+  type:  "bitly"
+  username:  "bitlyname"
+  token: "bitly_legacy_token"
+twitter:
+  username: "twittername"
+  consumer_key: "twitter_consumer_key"
+  consumer_secret: "twitter_consumer_secret"
+  access_token: "twitter_access_token"
+  access_token_secret: "twitter_access_secret"
+  
+  
