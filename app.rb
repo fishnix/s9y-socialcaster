@@ -8,6 +8,7 @@ require 'json'
 require 'mysql2'
 require 'bitly'
 require 'twitter'
+# require 'moneta'
 #require 'active_record'
 
 use Rack::MethodOverride
@@ -15,12 +16,18 @@ use Rack::MethodOverride
 config_file 'config.yml'
 set :protection, :except => :frame_options
 
+configure :development do
+  set :logging, Logger::DEBUG
+end
+
 @@mysqlclient = Mysql2::Client.new(  :host => settings.database[:mysql_host], 
                                      :username => settings.database[:mysql_user],
                                      :password => settings.database[:mysql_pass],
                                      :database => settings.database[:mysql_db],
                                      :reconnect => true
                                    )
+
+# @@logstore = Moneta.new(:YAML, :file => "settings.logstore")
 
 get "/" do
   "S9Y SocialCaster! <br />"
@@ -61,7 +68,14 @@ post "/api/tweet" do
     response[:status] = 400
     response[:message] = "Bad Request"
   end
-   
+  
+  # datetime = DateTime.now.to_s
+  # @@logstore[datetime] = response
+  
+  reporting = S9YSocialCaster::Reporting.new(settings.reporting, logger)
+  logger.info("got instance of reporting: #{reporting.inspect}")
+  reporting.add_tweet(tweet_text)
+  
   json response
 end
 
@@ -78,9 +92,15 @@ private
 def mysql_query(statement=nil, options={})
   logger.info("query - start")
   logger.debug("query - statement: #{statement}, options: #{options.inspect}")
-  result = @@mysqlclient.query(statement, options)
-  logger.debug("query - result: #{result.inspect}")
-  result
+  begin
+    logger.debug("query - checking database connection is still alive: #{@@mysqlclient.ping}")
+    result = @@mysqlclient.query(statement, options)
+    logger.debug("query - result: #{result.inspect}")
+    result
+  rescue
+    logger.error("query - Ouch... something went wrong.")
+    nil
+  end
 end
 
 def get_category_id(categories=nil)
@@ -277,4 +297,49 @@ def send_tweet(text=nil)
   
   logger.info("send_tweet - sending Tweet!")
   client.update(text)
+end
+
+module S9YSocialCaster
+  class Reporting
+    require 'redis'
+    require 'date'
+    require 'json'
+    
+    def initialize(args, logger)
+      redis_host  = args[:redis_host] || 'localhost'
+      redis_port  = args[:redis_port] || '6379'
+      @logger     = logger
+      @redis = Redis.new(:host => redis_host, :port => redis_port)
+    end
+    
+    def ping
+      begin
+        @redis.connected?
+      rescue
+        @redis.connect
+        raise "Cannot connect to redis!" unless @redis.connected?
+      end
+    end
+    
+    def add_tweet(tweet)
+      datetime = DateTime.now.to_s
+
+      @logger.info("add_tweet - start")
+      
+      report = {  :status       => 'success',
+                  :tweet        => tweet }
+
+      begin
+        # @logger.info("add_tweet - checking connection to redis server")
+        # ping
+        # 
+        @logger.info("add_tweet - Adding to redis report")            
+        @redis.hset("twitter-#{datetime}, report.to_json")
+      rescue
+        @logger.error("add_tweet - Couldn't write to redis!")
+      end
+      
+    end
+    
+  end
 end

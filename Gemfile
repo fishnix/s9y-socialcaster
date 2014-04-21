@@ -5,6 +5,8 @@ gem 'json'
 gem 'mysql2'
 gem 'bitly'
 gem 'twitter'
+gem 'redis'
+# gem 'moneta'
 # gem 'activerecord'
 
 group :test do
