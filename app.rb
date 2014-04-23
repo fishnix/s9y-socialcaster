@@ -9,7 +9,7 @@ require 'mysql2'
 require 'bitly'
 require 'twitter'
 # require 'moneta'
-#require 'active_record'
+# require 'active_record'
 
 use Rack::MethodOverride
 
@@ -69,14 +69,18 @@ post "/api/tweet" do
     response[:message] = "Bad Request"
   end
   
-  # datetime = DateTime.now.to_s
-  # @@logstore[datetime] = response
-  
-  reporting = S9YSocialCaster::Reporting.new(settings.reporting, logger)
-  logger.info("got instance of reporting: #{reporting.inspect}")
-  reporting.add_tweet(tweet_text)
+  reporting = S9Y::SocialCaster::Reporting.new(settings.reporting, logger)
+  logger.debug("got instance of reporting: #{reporting.inspect}")
+  reporting.add_report("twitter", tweet_text)
   
   json response
+end
+
+get "/report/:type" do
+  reporting = S9Y::SocialCaster::Reporting.new(settings.reporting, logger)
+  logger.debug("got instance of reporting: #{reporting.inspect}")
+  @data = reporting.get_data(params[:type])
+  erb :report
 end
 
 not_found do
@@ -276,6 +280,13 @@ def generate_tweet
   tweet_text << "\"#{rand_entry["title"]}\" "
   tweet_text << "#{rand_entry["link"]}"
   
+  rand_entry["categories"].each do |c|
+    cat = c.gsub(/[^0-9a-z_]/i, '')
+    if (tweet_text.length + cat.length + 2) < max_chars
+      tweet_text << " ##{cat.downcase}"
+    end
+  end
+  
   if (tweet_text.length + settings.twitter[:username].length + 1) < max_chars
     tweet_text << " @#{settings.twitter[:username]}"
   end
@@ -299,47 +310,66 @@ def send_tweet(text=nil)
   client.update(text)
 end
 
-module S9YSocialCaster
-  class Reporting
-    require 'redis'
-    require 'date'
-    require 'json'
+module S9Y
+  module SocialCaster
+    class Reporting
+      require 'redis'
+      require 'date'
+      require 'json'
     
-    def initialize(args, logger)
-      redis_host  = args[:redis_host] || 'localhost'
-      redis_port  = args[:redis_port] || '6379'
-      @logger     = logger
-      @redis = Redis.new(:host => redis_host, :port => redis_port)
-    end
-    
-    def ping
-      begin
-        @redis.connected?
-      rescue
-        @redis.connect
-        raise "Cannot connect to redis!" unless @redis.connected?
+      def initialize(args, logger)
+        redis_host  = args[:redis_host] || '127.0.0.1'
+        redis_port  = args[:redis_port] || '6379'
+        @logger     = logger
+        @redis = Redis.new(:host => redis_host, :port => redis_port)
       end
-    end
     
-    def add_tweet(tweet)
-      datetime = DateTime.now.to_s
+      def ping
+        begin
+          @redis.connected?
+        rescue
+          @redis.connect
+          raise "Cannot connect to redis!" unless @redis.connected?
+        end
+      end
+    
+      def add_report(type,content)
+        datetime = DateTime.now.to_s
 
-      @logger.info("add_tweet - start")
+        @logger.info("add_report - start")
       
-      report = {  :status       => 'success',
-                  :tweet        => tweet }
+        report = {  :status       => 'success',
+                    :content      => content }
 
-      begin
-        # @logger.info("add_tweet - checking connection to redis server")
-        # ping
-        # 
-        @logger.info("add_tweet - Adding to redis report")            
-        @redis.hset("twitter-#{datetime}, report.to_json")
-      rescue
-        @logger.error("add_tweet - Couldn't write to redis!")
+        begin
+          # @logger.info("add_tweet - checking connection to redis server")
+          # ping
+          # 
+          @logger.info("add_report - Adding to redis report")            
+          @redis.hset(type, datetime, report.to_json)
+        rescue
+          @logger.error("add_report - Couldn't write to redis!")
+        end
       end
       
-    end
+      def get_data(type)
+        @logger.info("get_data - start")
+        data = {}
+        
+        begin
+          @logger.info("get_data - Getting reporting data from redis")            
+          @redis.hgetall(type)
+          @redis.hkeys(type).each do |k|
+            d = JSON.parse(@redis.hget(type, k))
+            data[k] = d
+            @logger.info("get_data - #{k.inspect} #{d.inspect}")
+          end
+        rescue
+          @logger.error("get_data - Couldn't get reporting data from redis!")
+        end
+        data
+      end
     
+    end
   end
 end
