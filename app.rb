@@ -8,6 +8,7 @@ require 'json'
 require 'mysql2'
 require 'bitly'
 require 'twitter'
+require 'chartkick'
 # require 'moneta'
 # require 'active_record'
 
@@ -27,7 +28,11 @@ end
                                      :reconnect => true
                                    )
 
-# @@logstore = Moneta.new(:YAML, :file => "settings.logstore")
+Bitly.configure do |config|
+  config.api_version = 3
+  config.login = settings.shortener[:username]
+  config.api_key = settings.shortener[:token]
+end
 
 get "/" do
   "S9Y SocialCaster! <br />"
@@ -48,10 +53,11 @@ post "/api/tweet" do
   logger.debug("POST /api/tweet - params: #{params.inspect} ")
   
   response = Hash.new
-  if params['token'] === settings.secret_token
-    logger.info ("POST /api/tweet - Got correct token.")
+  if validate_token(params['token'])
+    logger.info("POST /api/tweet - Got correct token.")
     
-    tweet_text = generate_tweet
+    tweet = generate_tweet
+    tweet_text = tweet[:body]
     response[:tweet_body] = tweet_text
     
     if settings.send_tweets
@@ -72,6 +78,9 @@ post "/api/tweet" do
   reporting = S9Y::SocialCaster::Reporting.new(settings.reporting, logger)
   logger.debug("got instance of reporting: #{reporting.inspect}")
   reporting.add_report("twitter", tweet_text)
+  tweet[:categories].each do |c|
+    reporting.incr_category("twitter", c)
+  end
   
   json response
 end
@@ -80,7 +89,16 @@ get "/report/:type" do
   reporting = S9Y::SocialCaster::Reporting.new(settings.reporting, logger)
   logger.debug("got instance of reporting: #{reporting.inspect}")
   @data = reporting.get_data(params[:type])
+  logger.debug("got data: #{@data.inspect}")
   erb :report
+end
+
+get "/graph/:type" do
+  reporting = S9Y::SocialCaster::Reporting.new(settings.reporting, logger)
+  logger.debug("got instance of reporting: #{reporting.inspect}")
+  @categories = reporting.get_category_stats(params[:type])
+  logger.debug("got data: #{@categories.inspect}")
+  erb :graph
 end
 
 not_found do
@@ -92,6 +110,11 @@ error do
 end
 
 private
+
+def validate_token(token)
+  logger.info("validate_token - start")
+  token === settings.secret_token
+end
 
 def mysql_query(statement=nil, options={})
   logger.info("query - start")
@@ -257,12 +280,17 @@ def shorten_url(url=nil)
   logger.info("shorten_url - Start")
   
   logger.info("shorten_url - Attempting to shorten url: #{url}")
-  Bitly.use_api_version_3
-  bitlyclient = Bitly.new(settings.shortener[:username], settings.shortener[:token])
-  surl = bitlyclient.shorten(url)
-  logger.debug("shorten_url - Got response: #{surl.inspect}")
-  logger.info("shorten_url - Got back: #{surl.short_url}")
-  surl.short_url
+  
+  begin
+    bitlyclient = Bitly.client
+    surl = bitlyclient.shorten(url)
+    logger.debug("shorten_url - Got response: #{surl.inspect}")
+    logger.info("shorten_url - Got back: #{surl.short_url}")
+    surl.short_url
+  rescue
+    logger.error("shorten_url - Unable to shorten URL!")
+    nil
+  end
 end
 
 def generate_tweet
@@ -293,7 +321,10 @@ def generate_tweet
   
   logger.info("generate_tweet - Generated tweet text: \'#{tweet_text}\' with length: #{tweet_text.length}")
   
-  tweet_text
+  {
+    :body => tweet_text,
+    :categories => rand_entry["categories"]
+  }
 end
 
 def send_tweet(text=nil)
@@ -352,6 +383,16 @@ module S9Y
         end
       end
       
+      def incr_category(type, category)
+        @logger.info("incr_category - start")
+        begin
+          @logger.info("incr_category - Incrementing category: #{category} in for type: #{type}")
+          @redis.hincrby("#{type}_category", category, 1)
+        rescue
+          @logger.error("incr_category - Couldn't increment category!")
+        end
+      end
+      
       def get_data(type)
         @logger.info("get_data - start")
         data = {}
@@ -369,7 +410,22 @@ module S9Y
         end
         data
       end
-    
+      
+      def get_category_stats(type)
+        @logger.info("get_category_stats - start")
+        data = {}
+        
+        begin
+          @logger.info("get_category_stats - Getting reporting data from redis")            
+          @redis.hkeys("#{type}_category").each do |k|
+            data[k] = @redis.hget("#{type}_category", k).to_i
+            @logger.info("get_category_stats - #{k.inspect} #{data[k].inspect}")
+          end
+        rescue
+          @logger.error("get_category_stats - Couldn't get category stats data from redis!")
+        end
+        data
+      end 
     end
   end
 end

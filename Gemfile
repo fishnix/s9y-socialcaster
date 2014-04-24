@@ -6,6 +6,7 @@ gem 'mysql2'
 gem 'bitly'
 gem 'twitter'
 gem 'redis'
+gem 'chartkick'
 # gem 'moneta'
 # gem 'activerecord'
 
