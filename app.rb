@@ -14,6 +14,8 @@ require 'chartkick'
 
 use Rack::MethodOverride
 
+@@appname = "S9Y SocialCaster"
+
 config_file 'config.yml'
 set :protection, :except => :frame_options
 
@@ -35,17 +37,10 @@ Bitly.configure do |config|
 end
 
 get "/" do
-  "S9Y SocialCaster! <br />"
+  "#{appname}! <br />"
 end
 
-get "/rand" do
-  # max = get_max_entry_id.to_i
-  rand_entry = get_random_entry
-  # category_id = get_category_id(["Giveaways","Deals + Sales"])
-  rand_entry.to_json
-end
-
-post "/api/tweet" do
+post "/api/tweet" do  
   content_type :json
   request.body.rewind  # in case someone already read it
   params = JSON.parse request.body.read
@@ -57,48 +52,79 @@ post "/api/tweet" do
     logger.info("POST /api/tweet - Got correct token.")
     
     tweet = generate_tweet
+    
+    if tweet[:status] === "error"
+      raise tweet.to_json
+    end
+
+    tweet["timestamp"] = DateTime.now.to_s
     tweet_text = tweet[:body]
     response[:tweet_body] = tweet_text
     
     if settings.send_tweets
       response[:tweet_sent] = true
+      tweet["status"] = "sent"
       send_tweet(tweet_text)
     else
       response[:tweet_sent] = false
+      tweet["status"] = "not sent"
       tweet_text
     end
     
     response[:status] = 200
-    response[:message] = "Success"
+    response[:status_message] = "Success"
   else
     response[:status] = 400
-    response[:message] = "Bad Request"
+    response[:status_message] = "Bad Request"
   end
   
   reporting = S9Y::SocialCaster::Reporting.new(settings.reporting, logger)
   logger.debug("got instance of reporting: #{reporting.inspect}")
-  reporting.add_report("twitter", tweet_text)
-  tweet[:categories].each do |c|
-    reporting.incr_category("twitter", c)
+  reporting.add_post("twitter", tweet["timestamp"])
+  reporting.add_post_detail("twitter", tweet)
+  unless tweet[:categories].nil?
+    tweet[:categories].each do |c|
+      reporting.incr_category("twitter", c)
+    end
   end
+  reporting.add_post_links("twitter", tweet)
   
   json response
 end
 
-get "/report/:type" do
+get "/:type/posts/report" do
   reporting = S9Y::SocialCaster::Reporting.new(settings.reporting, logger)
   logger.debug("got instance of reporting: #{reporting.inspect}")
   @data = reporting.get_data(params[:type])
   logger.debug("got data: #{@data.inspect}")
-  erb :report
+  erb :posts_report
 end
 
-get "/graph/:type" do
+get "/:type/categories/report" do  
   reporting = S9Y::SocialCaster::Reporting.new(settings.reporting, logger)
   logger.debug("got instance of reporting: #{reporting.inspect}")
   @categories = reporting.get_category_stats(params[:type])
   logger.debug("got data: #{@categories.inspect}")
-  erb :graph
+  erb :categories_report
+end
+
+get "/:type/posts/clicks" do
+  reporting = S9Y::SocialCaster::Reporting.new(settings.reporting, logger)
+  logger.debug("got instance of reporting: #{reporting.inspect}")
+  last_posts = reporting.get_last_posts(params[:type], 20)
+  
+  bitlyclient = Bitly.client
+  @stats = reporting.get_clicks_by_link(bitlyclient, last_posts.values)
+  # @clicks = {}
+  # last_posts.each do |k,v|
+  #   @clicks[v] = reporting.get_clicks_by_link(bitlyclient,v)
+  # end
+
+  erb :posts_clicks
+end
+
+get "/:type/categories/clicks" do
+  erb :categories_clicks
 end
 
 not_found do
@@ -149,7 +175,7 @@ def get_category_name(category_ids=[])
   
   category_names = []
   if category_ids.empty?
-    return category_names
+    return []
   end
   
   [*category_ids].each do |c|
@@ -271,6 +297,7 @@ def get_random_entry
   { 
     "id"          => entry["id"],
     "title"       => entry["title"],
+    "url"         => permalink,
     "link"        => short_url,
     "categories"  => categories
   }
@@ -306,7 +333,21 @@ def generate_tweet
   tweet_text = "#{teaser_text}"
   tweet_text << " " unless tweet_text.empty?
   tweet_text << "\"#{rand_entry["title"]}\" "
-  tweet_text << "#{rand_entry["link"]}"
+  
+  if rand_entry["link"].nil?
+    if (tweet_text.length + rand_entry["url"].length) < max_chars
+      tweet_text << "#{rand_entry["url"]}"
+    else
+      logger.error("generate_tweet - Didnt get short URL and long url is too long for tweet!")
+      err = { 
+              :status => "error",
+              :message => "Couldnt get short url and long url is too long."
+            }
+      return err
+    end
+  else
+    tweet_text << "#{rand_entry["link"]}"
+  end
   
   rand_entry["categories"].each do |c|
     cat = c.gsub(/[^0-9a-z_]/i, '')
@@ -322,8 +363,10 @@ def generate_tweet
   logger.info("generate_tweet - Generated tweet text: \'#{tweet_text}\' with length: #{tweet_text.length}")
   
   {
+    :status => "success",
     :body => tweet_text,
-    :categories => rand_entry["categories"]
+    :categories => rand_entry["categories"],
+    :link => rand_entry["link"]
   }
 end
 
@@ -364,20 +407,23 @@ module S9Y
         end
       end
     
-      def add_report(type,content)
-        datetime = DateTime.now.to_s
-
-        @logger.info("add_report - start")
-      
-        report = {  :status       => 'success',
-                    :content      => content }
+      def add_post(type,date)
+        @logger.info("add_post - start")
 
         begin
-          # @logger.info("add_tweet - checking connection to redis server")
-          # ping
-          # 
+          @logger.info("add_post - Adding post #{date} to redis report")            
+          @redis.rpush("#{type}_post", date)
+        rescue
+          @logger.error("add_post - Couldn't write to redis!")
+        end
+      end
+
+      def add_post_detail(type,content)
+        @logger.info("add_report - start")
+
+        begin
           @logger.info("add_report - Adding to redis report")            
-          @redis.hset(type, datetime, report.to_json)
+          @redis.hset("#{type}_detail", content['timestamp'], content.to_json)
         rescue
           @logger.error("add_report - Couldn't write to redis!")
         end
@@ -386,10 +432,22 @@ module S9Y
       def incr_category(type, category)
         @logger.info("incr_category - start")
         begin
-          @logger.info("incr_category - Incrementing category: #{category} in for type: #{type}")
+          @logger.info("incr_category - Incrementing category: #{category} in: #{type}_category")
           @redis.hincrby("#{type}_category", category, 1)
         rescue
-          @logger.error("incr_category - Couldn't increment category!")
+          @logger.error("incr_category - Couldn't increment category! #{category}")
+        end
+      end
+      
+      def add_post_links(type, content)
+        @logger.info("add_post_links - start")
+        @logger.debug("add_post_links - #{content.inspect}")
+        begin
+          link = content[:link] || content[:url]
+          @logger.info("add_post_links - Adding post/link info: #{content['timstamp']} => #{link}")
+          @redis.hset("#{type}_post_link", content['timestamp'], link)
+        rescue
+          @logger.error("add_post_links - Couldn't add post/link record!")
         end
       end
       
@@ -399,9 +457,9 @@ module S9Y
         
         begin
           @logger.info("get_data - Getting reporting data from redis")            
-          @redis.hgetall(type)
-          @redis.hkeys(type).each do |k|
-            d = JSON.parse(@redis.hget(type, k))
+          @redis.hgetall("#{type}_detail")
+          @redis.hkeys("#{type}_detail").each do |k|
+            d = JSON.parse(@redis.hget("#{type}_detail", k))
             data[k] = d
             @logger.info("get_data - #{k.inspect} #{d.inspect}")
           end
@@ -425,7 +483,39 @@ module S9Y
           @logger.error("get_category_stats - Couldn't get category stats data from redis!")
         end
         data
-      end 
+      end
+
+      def get_last_posts(type, num)
+        @logger.info("get_last_posts - start")
+        data = {}
+        begin
+          @logger.info("get_last_posts - Getting last #{num} posts from redis")            
+          @redis.sort("#{type}_post", :order => "alpha desc", :limit => [0, num]).each do |k|
+            data[k] = @redis.hget("#{type}_post_link", k)
+          end
+          @logger.info("get_last_posts - #{data.inspect}")
+        rescue
+          @logger.error("get_last_posts - Couldn't get last posts from redis!")
+        end
+        data
+      end
+
+      def get_clicks_by_link(bitlyclient, link)
+        @logger.info("get_clicks_by_link - Start")
+        @logger.info("get_clicks_by_link - Getting stats for URL #{link}")
+        stats = {}
+        begin
+          bitlyclient.clicks(link).each do |s|
+            @logger.debug("get_clicks_by_link - Got response: #{s.inspect}")
+            # @logger.info("get_clicks_by_link - Got back: #{stats.link_clicks} in #{stats.unit}")
+            stats[s.short_url] = s.global_clicks
+          end
+        rescue
+          @logger.error("get_clicks_by_link - Unable to get stats for URL #{link}!")
+          nil
+        end
+        stats
+      end
     end
   end
 end

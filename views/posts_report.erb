@@ -1,0 +1,20 @@
+<div class="table-responsive">
+  <table class="table table-striped">
+    <thead>
+      <tr>
+        <th>Date</th>
+        <th>Content</th>
+        <th>Status</th>
+      </tr>
+    </thead>
+    <tbody>
+      <% @data.sort.reverse.each do |k,v| %>
+      <tr>
+        <td><%= k %></td>
+        <td><%= v['body'] %></td>
+        <td><%= v['status'] %></td>
+      </tr>
+      <% end %>
+    </tbody>
+  </table>
+</div>
