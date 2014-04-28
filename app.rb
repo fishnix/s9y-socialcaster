@@ -57,39 +57,36 @@ post "/api/tweet" do
       raise tweet.to_json
     end
 
-    tweet["timestamp"] = DateTime.now.to_s
+    tweet[:timestamp] = DateTime.now.to_s
     tweet_text = tweet[:body]
     response[:tweet_body] = tweet_text
     
     if settings.send_tweets
-      response[:tweet_sent] = true
-      tweet["status"] = "sent"
-      send_tweet(tweet_text)
+      if tweet_id = send_tweet(tweet_text)
+        response[:tweet_sent] = true
+        tweet[:status] = "sent"
+        tweet[:id] = tweet_id
+      else
+        response[:tweet_sent] = false
+        tweet[:status] = "error"
+        tweet[:id] = tweet_id
+      end
     else
       response[:tweet_sent] = false
-      tweet["status"] = "not sent"
+      tweet[:status] = "not sent"
       tweet_text
     end
     
     response[:status] = 200
     response[:status_message] = "Success"
+
+    do_reporting("twitter", tweet)
+    json tweet
   else
     response[:status] = 400
     response[:status_message] = "Bad Request"
+    json response
   end
-  
-  reporting = S9Y::SocialCaster::Reporting.new(settings.reporting, logger)
-  logger.debug("got instance of reporting: #{reporting.inspect}")
-  reporting.add_post("twitter", tweet["timestamp"])
-  reporting.add_post_detail("twitter", tweet)
-  unless tweet[:categories].nil?
-    tweet[:categories].each do |c|
-      reporting.incr_category("twitter", c)
-    end
-  end
-  reporting.add_post_links("twitter", tweet)
-  
-  json response
 end
 
 get "/:type/posts/report" do
@@ -111,15 +108,10 @@ end
 get "/:type/posts/clicks" do
   reporting = S9Y::SocialCaster::Reporting.new(settings.reporting, logger)
   logger.debug("got instance of reporting: #{reporting.inspect}")
-  last_posts = reporting.get_last_posts(params[:type], 20)
+  last_posts = reporting.get_last_posts(params[:type], 10)
   
   bitlyclient = Bitly.client
   @stats = reporting.get_clicks_by_link(bitlyclient, last_posts.values)
-  # @clicks = {}
-  # last_posts.each do |k,v|
-  #   @clicks[v] = reporting.get_clicks_by_link(bitlyclient,v)
-  # end
-
   erb :posts_clicks
 end
 
@@ -175,13 +167,14 @@ def get_category_name(category_ids=[])
   
   category_names = []
   if category_ids.empty?
+    logger.info("get_category_name - Returning empty category list.")
     return []
   end
   
   [*category_ids].each do |c|
     logger.info("get_category_name - Getting category name for #{c}")
     result = mysql_query("select category_name from #{settings.database[:table_prefix]}category where categoryid=\"#{c}\"")
-    category_name = result.first['category_name'].to_s
+    category_name = result ? result.first['category_name'].to_s : nil
     logger.info("get_category_name - Got category name #{category_name}")
     category_names << category_name
   end
@@ -351,13 +344,13 @@ def generate_tweet
   
   rand_entry["categories"].each do |c|
     cat = c.gsub(/[^0-9a-z_]/i, '')
-    if (tweet_text.length + cat.length + 2) < max_chars
+    if (tweet_text.length + " ##{cat.downcase}".length) < max_chars
       tweet_text << " ##{cat.downcase}"
     end
   end
   
-  if (tweet_text.length + settings.twitter[:username].length + 1) < max_chars
-    tweet_text << " @#{settings.twitter[:username]}"
+  if (tweet_text.length + " via @#{settings.twitter[:username]}".length) < max_chars
+    tweet_text << " via @#{settings.twitter[:username]}"
   end
   
   logger.info("generate_tweet - Generated tweet text: \'#{tweet_text}\' with length: #{tweet_text.length}")
@@ -380,8 +373,28 @@ def send_tweet(text=nil)
     config.access_token_secret = settings.twitter[:access_token_secret]
   end
   
-  logger.info("send_tweet - sending Tweet!")
-  client.update(text)
+  begin
+    logger.info("send_tweet - sending Tweet!")
+    tweet = client.update(text)
+    logger.debug("send_tweet - tweet: #{tweet.inspect}, client: #{client.inspect}")
+    tweet.id
+  rescue
+    logger.error("send_tweet - unable to send tweet!")
+    nil
+  end
+end
+
+def do_reporting(type, content)
+  reporting = S9Y::SocialCaster::Reporting.new(settings.reporting, logger)
+  logger.debug("got instance of reporting: #{reporting.inspect}")
+  reporting.add_post(type, content[:timestamp])
+  reporting.add_post_detail(type, content)
+  unless content[:categories].nil?
+    content[:categories].each do |c|
+      reporting.incr_category(type, c)
+    end
+  end
+  reporting.add_post_links(type, content)
 end
 
 module S9Y
@@ -407,25 +420,26 @@ module S9Y
         end
       end
     
-      def add_post(type,date)
+      def add_post(type, date)
         @logger.info("add_post - start")
 
         begin
-          @logger.info("add_post - Adding post #{date} to redis report")            
+          @logger.info("add_post - Adding post #{date} to redis list #{type}_post")            
           @redis.rpush("#{type}_post", date)
         rescue
           @logger.error("add_post - Couldn't write to redis!")
         end
       end
 
-      def add_post_detail(type,content)
-        @logger.info("add_report - start")
+      def add_post_detail(type, content)
+        @logger.info("add_post_detail - start")
 
         begin
-          @logger.info("add_report - Adding to redis report")            
-          @redis.hset("#{type}_detail", content['timestamp'], content.to_json)
+          @logger.info("add_post_detail - Adding to redis report: #{content.to_json}")
+          @logger.debug("add_post_detail - content: #{content.to_json}")        
+          @redis.hset("#{type}_detail", content[:timestamp], content.to_json)
         rescue
-          @logger.error("add_report - Couldn't write to redis!")
+          @logger.error("add_post_detail - Couldn't write to redis!")
         end
       end
       
@@ -444,8 +458,8 @@ module S9Y
         @logger.debug("add_post_links - #{content.inspect}")
         begin
           link = content[:link] || content[:url]
-          @logger.info("add_post_links - Adding post/link info: #{content['timstamp']} => #{link}")
-          @redis.hset("#{type}_post_link", content['timestamp'], link)
+          @logger.info("add_post_links - Adding post/link info: #{content[:timstamp]} => #{link}")
+          @redis.hset("#{type}_post_link", content[:timestamp], link)
         rescue
           @logger.error("add_post_links - Couldn't add post/link record!")
         end
@@ -508,7 +522,7 @@ module S9Y
           bitlyclient.clicks(link).each do |s|
             @logger.debug("get_clicks_by_link - Got response: #{s.inspect}")
             # @logger.info("get_clicks_by_link - Got back: #{stats.link_clicks} in #{stats.unit}")
-            stats[s.short_url] = s.global_clicks
+            stats[s.short_url] = s.global_clicks unless s.nil?
           end
         rescue
           @logger.error("get_clicks_by_link - Unable to get stats for URL #{link}!")

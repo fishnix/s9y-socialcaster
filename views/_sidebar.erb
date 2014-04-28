@@ -1,8 +1,8 @@
 <div class="col-sm-3 col-md-2 sidebar">
   <ul class="nav nav-sidebar">
-    <li class="active"><a href="/twitter/posts/report">Overview</a></li>
-    <li><a href="/twitter/categories/report">Categories</a></li>
-    <li><a href="/twitter/posts/clicks">Clicks by Post</a></li>
-    <li><a href="/twitter/categories/clicks">Clicks by Category</a></li>
+    <li class="<%= 'active' if request.path_info === '/twitter/posts/report' %>"><a href="/twitter/posts/report">Overview</a></li>
+    <li class="<%= 'active' if request.path_info === '/twitter/categories/report' %>"><a href="/twitter/categories/report">Categories</a></li>
+    <li class="<%= 'active' if request.path_info === '/twitter/posts/clicks' %>"><a href="/twitter/posts/clicks">Clicks by Post</a></li>
+    <li class="<%= 'active' if request.path_info === '/twitter/categories/clicks' %>"><a href="/twitter/categories/clicks">Clicks by Category</a></li>
   </ul>
 </div>
