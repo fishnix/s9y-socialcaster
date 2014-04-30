@@ -13,6 +13,8 @@ them on social media.  Here are some of the features:
 ### Requirements
 - bundler  
 - access to the S9Y database
+- mysql-devel
+- redis (for reporting)
 - twitter app account
 - bitly developer account + [legacy] token
 
@@ -43,3 +45,5 @@ them on social media.  Here are some of the features:
 - write an admin interface that uses sqlite or something for the backend
 - refactor with activerecord (maybe)
 - other social media sites
+- add more reports and analytics
+- break out other app meat into a class
