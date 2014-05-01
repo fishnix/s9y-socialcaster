@@ -1,6 +1,8 @@
 #
 # ¯\_(ツ)_/¯
 #
+require 'rubygems'
+require 'bundler/setup'
 require 'sinatra'
 require 'sinatra/config_file'
 require 'sinatra/json'
