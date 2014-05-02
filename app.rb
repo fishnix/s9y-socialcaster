@@ -351,7 +351,7 @@ def generate_tweet
     end
   end
   
-  if (tweet_text.length + " via @#{settings.twitter[:username]}".length) < max_chars
+  if settings.add_via and (tweet_text.length + " via @#{settings.twitter[:username]}".length) < max_chars
     tweet_text << " via @#{settings.twitter[:username]}"
   end
   
