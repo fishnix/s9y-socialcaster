@@ -39,7 +39,7 @@ Bitly.configure do |config|
 end
 
 get "/" do
-  "#{appname}! <br />"
+  redirect to('/twitter/posts/report')
 end
 
 post "/api/tweet" do  
