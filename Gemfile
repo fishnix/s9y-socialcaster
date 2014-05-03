@@ -7,6 +7,7 @@ gem 'bitly'
 gem 'twitter'
 gem 'redis'
 gem 'chartkick'
+gem 'activesupport'
 # gem 'moneta'
 # gem 'activerecord'
 

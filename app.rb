@@ -11,6 +11,7 @@ require 'mysql2'
 require 'bitly'
 require 'twitter'
 require 'chartkick'
+require 'active_support/time'
 # require 'moneta'
 # require 'active_record'
 
