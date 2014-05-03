@@ -59,7 +59,7 @@ post "/api/tweet" do
       raise tweet.to_json
     end
 
-    tweet[:timestamp] = DateTime.now.to_s
+    tweet[:timestamp] = DateTime.now.change(:offset => settings.zone_offset).to_s
     tweet_text = tweet[:body]
     response[:tweet_body] = tweet_text
     

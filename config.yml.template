@@ -10,6 +10,7 @@ excluded_categories:
   - "Out of Date"
 included_categories:
 add_via: true
+zone_offset: "-0500"
 database:
   mysql_host:   "127.0.0.1"
   mysql_port:   "3306"
