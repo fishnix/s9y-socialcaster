@@ -1,5 +1,5 @@
 config.yml
 Gemfile.lock
 .DS_Store
-tmp/
-log/
+tmp
+log

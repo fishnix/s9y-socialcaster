@@ -37,6 +37,7 @@ Bitly.configure do |config|
   config.api_version = 3
   config.login = settings.shortener[:username]
   config.api_key = settings.shortener[:token]
+  config.timeout = 30
 end
 
 get "/" do
@@ -92,6 +93,11 @@ post "/api/tweet" do
   end
 end
 
+get "/update_reports" do  
+  logger.debug("GET /update_reports")
+  update_bitly_reports.to_s
+end
+
 get "/:type/posts/report" do
   reporting = S9Y::SocialCaster::Reporting.new(settings.reporting, logger)
   logger.debug("got instance of reporting: #{reporting.inspect}")
@@ -112,7 +118,8 @@ get "/:type/posts/clicks" do
   reporting = S9Y::SocialCaster::Reporting.new(settings.reporting, logger)
   logger.debug("got instance of reporting: #{reporting.inspect}")
   last_posts = reporting.get_last_posts(params[:type], 10)
-  
+  logger.debug("got last posts: #{last_posts.inspect}")
+
   bitlyclient = Bitly.client
   @stats = reporting.get_clicks_by_link(bitlyclient, last_posts.values)
   erb :posts_clicks
@@ -397,7 +404,18 @@ def do_reporting(type, content)
       reporting.incr_category(type, c)
     end
   end
+  link = content[:link] || content[:url]
+  reporting.add_bitly_link(link)
   reporting.add_post_links(type, content)
+end
+
+def update_bitly_reports
+  reporting = S9Y::SocialCaster::Reporting.new(settings.reporting, logger)
+  logger.debug("update_bitly_reports - got instance of reporting: #{reporting.inspect}")
+  bitlyclient = Bitly.client
+  stats = reporting.get_clicks_by_link(bitlyclient, reporting.get_last_bitly_links(10))
+  logger.info("update_bitly_reports - #{stats.inspect}")
+  stats
 end
 
 module S9Y
@@ -431,6 +449,17 @@ module S9Y
           @redis.rpush("#{type}_post", date)
         rescue
           @logger.error("add_post - Couldn't write to redis!")
+        end
+      end
+
+      def add_bitly_link(link)
+        @logger.info("add_bitly_link - start")
+
+        begin
+          @logger.info("add_bitly_link - Adding linke #{link} to redis list bitly_links")            
+          @redis.rpush("bitly_links", link)
+        rescue
+          @logger.error("add_bitly_link - Couldn't write to redis!")
         end
       end
 
@@ -508,6 +537,7 @@ module S9Y
         begin
           @logger.info("get_last_posts - Getting last #{num} posts from redis")            
           @redis.sort("#{type}_post", :order => "alpha desc", :limit => [0, num]).each do |k|
+            @logger.info("get_last_posts - post: #{k.inspect}")
             data[k] = @redis.hget("#{type}_post_link", k)
           end
           @logger.info("get_last_posts - #{data.inspect}")
@@ -517,15 +547,29 @@ module S9Y
         data
       end
 
+      def get_last_bitly_links(num)
+        @logger.info("get_last_bitly_links - start")
+        links = []
+        # begin
+          @logger.info("get_last_bitly_links - Getting last #{num} links from redis")            
+          links = @redis.sort("bitly_links", :order => "alpha desc", :limit => [0, num])
+          @logger.info("get_last_bitly_links - #{links.inspect}")
+        # rescue
+          @logger.error("get_last_bitly_links - Couldn't get last links from redis!")
+        # end
+        links
+      end
+
       def get_clicks_by_link(bitlyclient, link)
         @logger.info("get_clicks_by_link - Start")
         @logger.info("get_clicks_by_link - Getting stats for URL #{link}")
         stats = {}
         begin
-          bitlyclient.clicks(link).each do |s|
+          [*bitlyclient.clicks(link)].each do |s|
             @logger.debug("get_clicks_by_link - Got response: #{s.inspect}")
-            # @logger.info("get_clicks_by_link - Got back: #{stats.link_clicks} in #{stats.unit}")
             stats[s.short_url] = s.global_clicks unless s.nil?
+            @logger.debug("get_clicks_by_link - Adding to bitly_clicks: link: #{s.short_url} clicks: #{stats[s.short_url]}")
+            @redis.hset("bitly_clicks", s.short_url, stats[s.short_url])
           end
         rescue
           @logger.error("get_clicks_by_link - Unable to get stats for URL #{link}!")
