@@ -1,4 +1,4 @@
-require 'rake/testtask'
-Rake::TestTask.new do |t|
-  t.pattern = "spec/*_spec.rb" 
-end
+require 'rspec/core/rake_task'
+
+desc "Run unit tests."
+RSpec::Core::RakeTask.new(:test)
