@@ -1,13 +1,4 @@
-ENV['RACK_ENV'] = 'test'
-
-begin
-  require_relative '../app'
-rescue NameError 
-  require File.expand_path('../app', __FILE__)
-end
-
-require 'rspec'
-require 'rack/test'
+require File.expand_path '../spec_helper.rb', __FILE__
 
 describe "The S9Y SocialCaster App" do
   include Rack::Test::Methods
