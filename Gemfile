@@ -1,4 +1,5 @@
 source 'http://rubygems.org'
+
 gem 'sinatra'
 gem 'sinatra-contrib'
 gem 'json'
@@ -10,6 +11,10 @@ gem 'chartkick'
 gem 'activesupport'
 # gem 'moneta'
 # gem 'activerecord'
+
+group :development do
+  gem 'shotgun'
+end
 
 group :test do
   gem "rack-test"

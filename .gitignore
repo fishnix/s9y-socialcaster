@@ -1,5 +1,7 @@
-config.yml
+config/config.yml
 Gemfile.lock
 .DS_Store
 tmp
 log
+test_post.sh
+.idea
