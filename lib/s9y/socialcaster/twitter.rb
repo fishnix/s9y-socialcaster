@@ -53,7 +53,7 @@ module SocialCaster
     def send_tweet(text=nil)
       logger.info("send_tweet - Start")
 
-      client = Twitter::REST::Client.new do |config|
+      client = ::Twitter::REST::Client.new do |config|
         config.consumer_key        = settings.twitter[:consumer_key]
         config.consumer_secret     = settings.twitter[:consumer_secret]
         config.access_token        = settings.twitter[:access_token]
